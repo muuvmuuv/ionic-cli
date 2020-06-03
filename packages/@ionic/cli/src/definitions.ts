@@ -4,7 +4,7 @@ import {
   CommandLineInputs,
   CommandLineOptions,
   CommandMetadata as FrameworkCommandMetadata,
-  CommandMetadataInput,
+  CommandMetadataInput as FrameworkCommandMetadataInput,
   CommandMetadataOption as FrameworkCommandMetadataOption,
   HydratedCommandMetadata as FrameworkHydratedCommandMetadata,
   ICommand as FrameworkCommand,
@@ -22,7 +22,6 @@ import * as fs from 'fs';
 export {
   CommandLineInputs,
   CommandLineOptions,
-  CommandMetadataInput,
   NamespaceMetadata,
 } from '@ionic/cli-framework';
 
@@ -54,12 +53,22 @@ export interface CordovaPackageJson extends PackageJson {
   };
 }
 
+export interface CordovaAndroidBuildOutputEntry {
+  outputType: {
+    type: string;
+  };
+  path: string;
+}
+
 export interface Runner<T extends object, U> {
   run(options: T): Promise<U>;
 }
 
 export type ProjectType = 'angular' | 'ionic-angular' | 'ionic1' | 'custom' | 'bare' | 'react' | 'vue';
-export type HookName = 'build:before' | 'build:after' | 'serve:before' | 'serve:after';
+export type HookName = 'build:before' | 'build:after' | 'serve:before' | 'serve:after' | 'capacitor:run:before' | 'capacitor:build:before';
+
+export type CapacitorRunHookName = 'capacitor:run:before';
+export type CapacitorBuildHookName = 'capacitor:build:before';
 
 export interface BaseHookContext {
   project: {
@@ -69,6 +78,22 @@ export interface BaseHookContext {
   };
   argv: string[];
   env: NodeJS.ProcessEnv;
+}
+
+export type AnyServeOptions = ReactServeOptions | AngularServeOptions | IonicAngularServeOptions | Ionic1ServeOptions;
+export type AnyBuildOptions = ReactBuildOptions | AngularBuildOptions | IonicAngularBuildOptions | Ionic1BuildOptions;
+
+export interface CapacitorRunHookInput {
+  readonly name: CapacitorRunHookName;
+  readonly serve?: AnyServeOptions;
+  readonly build?: AnyBuildOptions;
+  readonly capacitor: IonicCapacitorOptions;
+}
+
+export interface CapacitorBuildHookInput {
+  readonly name: CapacitorBuildHookName;
+  readonly build: AnyBuildOptions;
+  readonly capacitor: IonicCapacitorOptions;
 }
 
 export interface BuildHookInput {
@@ -86,7 +111,7 @@ export interface ServeAfterHookInput {
   readonly serve: (AngularServeOptions | IonicAngularServeOptions | Ionic1ServeOptions) & ServeDetails;
 }
 
-export type HookInput = BuildHookInput | ServeBeforeHookInput | ServeAfterHookInput;
+export type HookInput = BuildHookInput | ServeBeforeHookInput | ServeAfterHookInput | CapacitorRunHookInput | CapacitorBuildHookInput;
 export type HookContext = BaseHookContext & HookInput;
 
 export type HookFn = (ctx: HookContext) => Promise<void>;
@@ -208,6 +233,22 @@ export interface OAuthIdentityDetails {
   html_url: string;
 }
 
+export interface OAuthServerConfig {
+  authorizationUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  apiAudience: string;
+}
+
+export interface OpenIdToken {
+  access_token: string;
+  expires_in: number;
+  id_token?: string;
+  refresh_token?: string;
+  scope: 'openid profile email offline_access';
+  token_type: 'Bearer';
+}
+
 export interface Snapshot {
   id: string;
   sha: string;
@@ -244,6 +285,7 @@ export interface IConfig extends BaseConfig<ConfigFile> {
   getGitHost(): string;
   getGitPort(): number;
   getHTTPConfig(): CreateRequestOptions;
+  getOpenIDOAuthConfig(): OAuthServerConfig;
 }
 
 export interface ProjectPersonalizationDetails {
@@ -252,6 +294,9 @@ export interface ProjectPersonalizationDetails {
   packageId?: string;
   version?: string;
   description?: string;
+  themeColor?: string;
+  appIcon?: Buffer;
+  splash?: Buffer;
 }
 
 export interface IProjectConfig {
@@ -284,6 +329,7 @@ export interface IProject {
 
   getDocsUrl(): Promise<string>;
   getSourceDir(sourceRoot?: string): Promise<string>;
+  getDefaultDistDir(): Promise<string>;
   getDistDir(): Promise<string>;
   getInfo(): Promise<InfoItem[]>;
   detected(): Promise<boolean>;
@@ -291,7 +337,7 @@ export interface IProject {
   getIntegration(name: IntegrationName): Required<ProjectIntegration> | undefined;
   requireIntegration(name: IntegrationName): Required<ProjectIntegration>;
   requireAppflowId(): Promise<string>;
-  getPackageJson(pkgName?: string): Promise<[PackageJson | undefined, string | undefined]>;
+  getPackageJson(pkgName?: string, options?: { logErrors?: boolean }): Promise<[PackageJson | undefined, string | undefined]>;
   requirePackageJson(pkgName?: string): Promise<PackageJson>;
   personalize(details: ProjectPersonalizationDetails): Promise<void>;
   registerAilments(registry: IAilmentRegistry): Promise<void>;
@@ -333,6 +379,10 @@ export interface PackageVersions {
   [key: string]: string;
 }
 
+export interface CommandMetadataInput extends FrameworkCommandMetadataInput {
+  private?: boolean;
+}
+
 export interface CommandMetadataOption extends FrameworkCommandMetadataOption {
   private?: boolean;
   hint?: string;
@@ -354,11 +404,12 @@ export interface ISession {
   login(email: string, password: string): Promise<void>;
   ssoLogin(email: string): Promise<void>;
   tokenLogin(token: string): Promise<void>;
+  webLogin(): Promise<void>;
   logout(): Promise<void>;
 
   isLoggedIn(): boolean;
   getUser(): { id: number; };
-  getUserToken(): string;
+  getUserToken(): Promise<string>;
 }
 
 export interface IShellSpawnOptions extends SpawnOptions {
@@ -419,6 +470,16 @@ export interface ConfigFile {
   'user.email'?: string;
   'tokens.user'?: string;
   'tokens.telemetry'?: string;
+  'tokens.refresh'?: string;
+  'tokens.issuedOn'?: string;
+  'tokens.expiresInSeconds'?: number;
+  'tokens.flowName'?: string;
+
+  // oauth configs
+  'oauth.openid.authorization_url'?: string;
+  'oauth.openid.token_url'?: string;
+  'oauth.openid.client_id'?: string;
+  'oauth.openid.api_audience'?: string;
 
   // Features
   'features.ssl-commands'?: boolean;
@@ -476,10 +537,16 @@ export interface APIResponsePageTokenMeta extends APIResponseMeta {
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE' | 'PURGE' | 'HEAD' | 'OPTIONS';
 
+export const enum ContentType {
+  JSON = 'application/json',
+  FORM_URLENCODED = 'application/x-www-form-urlencoded',
+  HTML = 'text/html',
+}
+
 export interface IClient {
   config: IConfig;
 
-  make(method: HttpMethod, path: string): Promise<{ req: SuperAgentRequest; }>;
+  make(method: HttpMethod, path: string, contentType?: ContentType): Promise<{ req: SuperAgentRequest; }>;
   do(req: SuperAgentRequest): Promise<APIResponseSuccess>;
   paginate<T extends Response<object[]>>(args: PaginateArgs<T>): IPaginator<T>;
 }
@@ -565,6 +632,16 @@ export interface VueBuildOptions extends BuildOptions<'vue'> {
   cordovaAssets?: boolean;
 }
 
+export interface IonicCapacitorOptions {
+  verbose?: boolean;
+  appId?: string;
+  appName?: string;
+  server?: {
+    url?: string;
+  };
+  '--': string[];
+}
+
 export interface IonicAngularBuildOptions extends BuildOptions<'ionic-angular'> {
   prod: boolean;
   sourcemaps?: boolean;
@@ -597,6 +674,7 @@ export interface ServeOptions {
   // Command Options
   host: string;
   port: number;
+  publicHost?: string;
   livereload: boolean;
   proxy: boolean;
   lab: boolean;
